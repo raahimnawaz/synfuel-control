@@ -12,10 +12,11 @@ This is fundamentally a **robotics/controls problem** wearing a chemistry hat. T
 on any real machine. The project is **simulated end-to-end (software-in-the-loop)**,
 structured so each layer can later drop onto real ESP32 / Jetson Orin Nano hardware.
 
-> **Status:** Phases 1–3 complete — first-principles reactor simulator with
+> **Status:** Phases 1–4 complete — first-principles reactor simulator with
 > literature-sourced kinetics and a demonstrable thermal-runaway regime, a data-science
-> layer (DoE, EDA, global sensitivity, sensor-noise model), and a physics-informed neural
-> surrogate (R² ≈ 0.996, exported to ONNX).
+> layer (DoE, EDA, global sensitivity, sensor-noise model), a physics-informed neural
+> surrogate (R² ≈ 0.996, ONNX), and a **closed-loop controller** that holds the reactor
+> safe through a cooling-failure disturbance that otherwise causes runaway.
 
 ## Architecture (planned)
 
@@ -24,7 +25,7 @@ structured so each layer can later drop onto real ESP32 / Jetson Orin Nano hardw
 | **1** | Reactor sim (`sim/`) | First-principles ODE "plant": coupled RWGS + FT kinetics, energy balance, thermal runaway. ✅ |
 | **2** | Data science (`analysis/`) | Latin-hypercube DoE, EDA, from-scratch Sobol sensitivity, sensor/ADC noise model. ✅ |
 | **3** | PINN surrogate (`pinn/`) | Physics-informed NN: inputs → steady state, with conservation residuals in the loss; ONNX export. ✅ |
-| 4 | Controller (`control/`) | Maximise C5+ yield while holding T below the runaway limit. |
+| **4** | Controller (`control/`) | RTO setpoint optimisation + PI safety feedback; rejects a cooling-failure disturbance. ✅ |
 | 5 | C++ edge inference (`edge/`) | Compiled inference engine, latency-benchmarked (Jetson target). |
 | 6 | Analog + ESP32 (`circuits/`, `firmware/`) | Sensor-conditioning circuits → ESP32 telemetry → actuation. |
 
@@ -106,6 +107,38 @@ state. Why predict the full state rather than just yield: it lets the loss enfor
 
 ```bash
 uv run python -m pinn.train --n 2500 --epochs 4000   # train, validate, export model.onnx
+```
+
+## Phase 4 — closed-loop control
+
+The control layer that makes this a *control* project. Two layers, like a real process
+plant:
+
+- **RTO (`controller.py`)** — uses the ONNX surrogate as a fast model to find the
+  yield-maximising setpoint subject to a steady-state temperature ceiling, solved by a
+  batched search over the (vectorised) surrogate.
+- **Safety feedback** — a **PI loop** that regulates bed temperature by adjusting the
+  **jacket coolant temperature**, rejecting disturbances the surrogate never saw.
+
+**Headline result** — at the optimal setpoint, a **cooling failure** (jacket capacity
+drops ~67%) hits at t = 60 s:
+
+| | controlled | uncontrolled |
+|---|---|---|
+| peak temperature | **296 °C (safe)** | 328 °C → **runaway** |
+| final C5+ yield | 80 % | 89 % (meaningless — catalyst sinters) |
+
+Two engineering lessons are documented in `control/controller.py` and were the crux of
+getting this to work:
+1. **Coolant temperature, not catalyst, is the effective actuator** — at the operating
+   point conversion stays near-complete until the catalyst is almost fully cut, so
+   throttling it barely moves temperature; increasing cooling does.
+2. **PI, not proportional** — a memoryless proportional law restores the setpoint the
+   instant the bed cools and sets up a relaxation oscillation whose peaks can *exceed*
+   the uncontrolled runaway. The integral term settles smoothly.
+
+```bash
+uv run python -m control.closed_loop          # controlled vs uncontrolled + plot
 ```
 
 ## License
