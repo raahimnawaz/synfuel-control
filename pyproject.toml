@@ -10,6 +10,10 @@ dependencies = [
     "scipy>=1.11",
     "matplotlib>=3.8",
     "pandas>=2.0",
+    "torch>=2.2",
+    "onnx>=1.15",
+    "onnxruntime>=1.17",
+    "onnxscript>=0.1",
 ]
 
 [project.optional-dependencies]

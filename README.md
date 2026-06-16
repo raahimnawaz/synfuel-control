@@ -12,9 +12,10 @@ This is fundamentally a **robotics/controls problem** wearing a chemistry hat. T
 on any real machine. The project is **simulated end-to-end (software-in-the-loop)**,
 structured so each layer can later drop onto real ESP32 / Jetson Orin Nano hardware.
 
-> **Status:** Phases 1–2 complete — first-principles reactor simulator with
-> literature-sourced kinetics and a demonstrable thermal-runaway regime, plus a
-> data-science layer (DoE, EDA, global sensitivity, sensor-noise model).
+> **Status:** Phases 1–3 complete — first-principles reactor simulator with
+> literature-sourced kinetics and a demonstrable thermal-runaway regime, a data-science
+> layer (DoE, EDA, global sensitivity, sensor-noise model), and a physics-informed neural
+> surrogate (R² ≈ 0.996, exported to ONNX).
 
 ## Architecture (planned)
 
@@ -22,7 +23,7 @@ structured so each layer can later drop onto real ESP32 / Jetson Orin Nano hardw
 |---|---|---|
 | **1** | Reactor sim (`sim/`) | First-principles ODE "plant": coupled RWGS + FT kinetics, energy balance, thermal runaway. ✅ |
 | **2** | Data science (`analysis/`) | Latin-hypercube DoE, EDA, from-scratch Sobol sensitivity, sensor/ADC noise model. ✅ |
-| 3 | PINN surrogate (`pinn/`) | Fast NN surrogate with mass/energy balance in the loss. |
+| **3** | PINN surrogate (`pinn/`) | Physics-informed NN: inputs → steady state, with conservation residuals in the loss; ONNX export. ✅ |
 | 4 | Controller (`control/`) | Maximise C5+ yield while holding T below the runaway limit. |
 | 5 | C++ edge inference (`edge/`) | Compiled inference engine, latency-benchmarked (Jetson target). |
 | 6 | Analog + ESP32 (`circuits/`, `firmware/`) | Sensor-conditioning circuits → ESP32 telemetry → actuation. |
@@ -81,6 +82,30 @@ uv run python -m analysis.sample --n 512     # generate the DoE dataset
 uv run python -m analysis.eda                # EDA overview figure
 uv run python -m analysis.sensitivity --n 256  # Sobol indices + figure
 uv run python -m analysis.noise              # sensor-noise demo + characterisation
+```
+
+## Phase 3 — physics-informed surrogate
+
+A small MLP maps the five operating inputs to the reactor's **6-dim steady state**
+`[CO₂, H₂, CO, H₂O, HC, T]`; conversion, yield, and temperature are derived from that
+state. Why predict the full state rather than just yield: it lets the loss enforce the
+**governing conservation laws** on the output.
+
+- **`pinn/losses.py`** — the physics-informed loss = data MSE + steady-state
+  **conservation residuals** (carbon balance, hydrogen balance, energy balance), written
+  as bounded *relative* residuals so they regularise the fit instead of fighting it. (The
+  naive `dy/dt = 0` residual is numerically stiff — large production/consumption terms
+  cancel — which is why relative balances are used; this is itself a worthwhile
+  PINN-engineering lesson.)
+- **`pinn/model.py`** — a 64-wide tanh MLP (~5 k params, small enough to hand-roll in
+  Phase 5) with input scaling and output de-normalisation baked in as buffers, so the
+  exported ONNX graph takes raw physical inputs and returns the physical state.
+- Trained on the **safe (non-runaway) branch**, where the input→state map is smooth and
+  single-valued. Held-out accuracy: **R² ≈ 0.996** on temperature, conversion, and C5+
+  yield (T MAE ≈ 0.7 °C). ONNX output matches torch to ~1e-4.
+
+```bash
+uv run python -m pinn.train --n 2500 --epochs 4000   # train, validate, export model.onnx
 ```
 
 ## License

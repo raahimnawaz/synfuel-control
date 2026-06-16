@@ -35,3 +35,6 @@ jobs:
           uv run python -m analysis.eda --no-show
           uv run python -m analysis.sensitivity --n 16 --no-show
           uv run python -m analysis.noise --no-show
+
+      - name: Smoke-test the PINN surrogate (train + ONNX export)
+        run: uv run python -m pinn.train --n 200 --epochs 300 --no-show
