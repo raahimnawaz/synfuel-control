@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "author": "synfuel-control",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-esp32-devkit-v1", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+    { "type": "wokwi-potentiometer", "id": "pot_temp", "top": -120, "left": 200,
+      "attrs": { "value": "512" } },
+    { "type": "wokwi-potentiometer", "id": "pot_press", "top": 60, "left": 200,
+      "attrs": { "value": "256" } },
+    { "type": "wokwi-servo", "id": "valve", "top": -80, "left": -180, "attrs": {} }
+  ],
+  "connections": [
+    [ "pot_temp:VCC", "esp:3V3", "red", [] ],
+    [ "pot_temp:GND", "esp:GND.1", "black", [] ],
+    [ "pot_temp:SIG", "esp:D34", "green", [] ],
+    [ "pot_press:VCC", "esp:3V3", "red", [] ],
+    [ "pot_press:GND", "esp:GND.1", "black", [] ],
+    [ "pot_press:SIG", "esp:D35", "blue", [] ],
+    [ "valve:V+", "esp:3V3", "red", [] ],
+    [ "valve:GND", "esp:GND.1", "black", [] ],
+    [ "valve:PWM", "esp:D25", "orange", [] ]
+  ],
+  "_comment": "Potentiometers stand in for the analog front-end outputs (the real RTD/bridge/op-amp circuits are in circuits/). Turning pot_temp injects a conditioned temperature voltage on the ADC; the servo visualises the coolant-valve command."
+}

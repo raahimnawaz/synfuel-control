@@ -1,0 +1,17 @@
+* Non-inverting op-amp gain stage -- Stage 2 (temperature channel)
+* G = 1 + Rf/Rg = 1 + 40k/10k = 5. Input = RTD divider output (~0.55 V).
+* Ideal op-amp modelled as a high-gain VCVS.
+.subckt OPAMP inp inn out
+Eop out 0 inp inn 1e6
+.ends
+
+Vin   vin 0 DC 0.55
+Xop   vin fb vout OPAMP
+Rf    vout fb 40k
+Rg    fb 0     10k
+.op
+.print op v(vout)        ; expect ~ 5 * 0.55 = 2.75 V
+* Sweep input across the divider's operating band (0.496..0.611 V):
+.dc Vin 0.496 0.611 0.01
+.print dc v(vout)
+.end

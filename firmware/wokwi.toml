@@ -1,0 +1,6 @@
+[wokwi]
+version = 1
+# Build the .ino with the Arduino/PlatformIO toolchain, then point these at the outputs.
+# (Wokwi compiles the sketch in-browser at wokwi.com; for the CLI, supply a built ELF.)
+firmware = "esp32_node.ino"
+elf = "build/esp32_node.ino.elf"

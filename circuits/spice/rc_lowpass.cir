@@ -1,0 +1,9 @@
+* RC anti-aliasing low-pass filter -- before each ADC
+* fc = 1/(2*pi*R*C) = 1/(2*pi*10k*1.6uF) = 9.95 Hz.
+* AC sweep shows -3 dB near 10 Hz and ~-15.6 dB at 60 Hz (mains hum).
+Vin in 0 AC 1
+R1  in out 10k
+C1  out 0  1.6u
+.ac dec 50 0.1 1k
+.print ac vdb(out) vp(out)
+.end

@@ -1,0 +1,20 @@
+* Wheatstone bridge + instrumentation amp -- pressure channel
+* Bridge arms R0=1k; pressure unbalances two arms by dR. Differential output
+* Vb = VREF*(dR/R0); instrumentation amp gain G=50 maps full scale to 3.3 V.
+* At 50 bar, dR/R0 = 0.02 -> Vb = 66 mV -> out = 3.3 V.
+.subckt INAMP inp inn out
+Eop out 0 inp inn 50          ; ideal differential gain of 50
+.ends
+
+Vexc  vexc 0 DC 3.3
+.param DR=20                  ; arm change in ohms (20 ohm = 2% = 50 bar full scale)
+* Left half-bridge:
+R1 vexc a {1000+DR}
+R2 a 0   {1000-DR}
+* Right half-bridge (reference):
+R3 vexc b 1000
+R4 b 0   1000
+Xia a b vout INAMP
+.op
+.print op v(a,b) v(vout)      ; expect v(a,b) ~ 66 mV, v(vout) ~ 3.3 V
+.end

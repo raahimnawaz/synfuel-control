@@ -57,6 +57,7 @@ int run_stdin() {
         synfuel::predict(in, out);
         std::printf("%.6f %.6f %.6f %.6f %.6f %.6f\n",
                     out[0], out[1], out[2], out[3], out[4], out[5]);
+        std::fflush(stdout);  // flush per line so a piped caller (the bridge) sees it
     }
     return 0;
 }

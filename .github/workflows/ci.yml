@@ -47,3 +47,8 @@ jobs:
           cmake -S edge -B edge/build -DCMAKE_BUILD_TYPE=Release
           cmake --build edge/build
           ./edge/build/synfuel_edge --bench 500000
+
+      - name: Verify analog front-end + run software-in-the-loop
+        run: |
+          uv run python -m circuits.verify
+          uv run python -m bridge.run_sil --no-show

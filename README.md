@@ -12,12 +12,12 @@ This is fundamentally a **robotics/controls problem** wearing a chemistry hat. T
 on any real machine. The project is **simulated end-to-end (software-in-the-loop)**,
 structured so each layer can later drop onto real ESP32 / Jetson Orin Nano hardware.
 
-> **Status:** Phases 1–5 complete — first-principles reactor simulator with
-> literature-sourced kinetics and a demonstrable thermal-runaway regime, a data-science
-> layer (DoE, EDA, global sensitivity, sensor-noise model), a physics-informed neural
-> surrogate (R² ≈ 0.996, ONNX), a **closed-loop controller** that survives a
-> cooling-failure disturbance, and a **dependency-free C++ edge engine** (~0.98 µs/inference,
-> ~4.8× faster than ONNX Runtime, float32-identical).
+> **Status: complete (all 6 phases).** First-principles reactor simulator with
+> literature-sourced kinetics and a thermal-runaway regime → data-science layer (DoE,
+> EDA, Sobol, sensor-noise model) → physics-informed neural surrogate (R² ≈ 0.996, ONNX)
+> → closed-loop controller surviving a cooling-failure disturbance → dependency-free C++
+> edge engine (~0.98 µs, ~4.8× faster than ONNX Runtime) → analog sensor front-end + ESP32
+> firmware closing the full **sense → infer → actuate** loop in software-in-the-loop.
 
 ## Architecture (planned)
 
@@ -28,7 +28,7 @@ structured so each layer can later drop onto real ESP32 / Jetson Orin Nano hardw
 | **3** | PINN surrogate (`pinn/`) | Physics-informed NN: inputs → steady state, with conservation residuals in the loss; ONNX export. ✅ |
 | **4** | Controller (`control/`) | RTO setpoint optimisation + PI safety feedback; rejects a cooling-failure disturbance. ✅ |
 | **5** | C++ edge inference (`edge/`) | Hand-rolled dependency-free C++ engine, weights baked in; benchmarked + parity-checked. ✅ |
-| 6 | Analog + ESP32 (`circuits/`, `firmware/`) | Sensor-conditioning circuits → ESP32 telemetry → actuation. |
+| **6** | Analog + ESP32 (`circuits/`, `firmware/`, `bridge/`) | Sensor-conditioning circuits, ESP32 firmware, and a software-in-the-loop bridge closing the full loop. ✅ |
 
 ## Phase 1 — reactor simulator
 
@@ -161,6 +161,49 @@ the bare inference — the control loop is ms-scale, so inference is never the b
 cmake -S edge -B edge/build -DCMAKE_BUILD_TYPE=Release && cmake --build edge/build
 ./edge/build/synfuel_edge --bench 2000000        # benchmark
 echo "3 25 490 1 60000" | ./edge/build/synfuel_edge   # predict a 6-state from stdin
+```
+
+## Phase 6 — analog front-end + ESP32 + software-in-the-loop
+
+The embedded layer, which closes the full **sense → infer → actuate** loop.
+
+**Analog front-end (`circuits/`)** — four conditioning stages, each derived by hand in
+[circuits/ANALYSIS.md](circuits/ANALYSIS.md), reproduced numerically by
+[`circuits/verify.py`](circuits/verify.py), and provided as SPICE decks in
+[circuits/spice/](circuits/spice/):
+
+| Stage | Result |
+|---|---|
+| PT100 RTD divider (temperature) | 0.88 mV/°C; self-heating 1.5 mW |
+| Non-inverting op-amp (×5) | 200–330 °C → 2.48–3.05 V; 0.18 °C/code |
+| Wheatstone bridge + in-amp (×50) | 50 bar → full-scale 3.3 V |
+| RC anti-aliasing (fc = 9.95 Hz) | −15.6 dB at 60 Hz |
+
+(A PT100 RTD is used, not an NTC thermistor — the reactor runs above a thermistor's
+~150 °C ceiling.)
+
+**Firmware (`firmware/`)** — `esp32_node.ino` reads the conditioned signals on two ADC
+pins, converts to physical units with the *same* calibration as `circuits/frontend.py`,
+streams JSON telemetry, and applies coolant-setpoint commands to a PWM valve output.
+Runs as-is in **Wokwi** (`diagram.json` + `wokwi.toml`); not compiled in CI (no ESP32
+toolchain), but its logic is mirrored and exercised by the SIL below.
+
+**Software-in-the-loop (`bridge/`)** — `run_sil.py` wires every layer together:
+
+```
+reactor plant → analog front-end + ADC + noise → virtual ESP32 (JSON) → bridge
+   → C++ edge engine (real subprocess) + controller → JSON command → ESP32 → plant
+```
+
+A cooling failure hits mid-run; the full distributed loop holds the reactor at **289 °C
+(safe)** through it. The deployed **C++ binary serves every in-loop inference** (480
+queries, tracking the true steady state to ~4 °C). The JSON protocol is identical to a
+real Wokwi/hardware ESP32, so the virtual node swaps for the real one with no bridge
+change — the standard **HIL/SIL** development pattern.
+
+```bash
+uv run python -m circuits.verify        # check the circuit hand-calcs
+uv run python -m bridge.run_sil         # run the full software-in-the-loop demo
 ```
 
 ## License

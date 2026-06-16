@@ -1,0 +1,13 @@
+* PT100 RTD temperature divider -- Stage 1 (temperature channel)
+* Vdiv = VREF * R_rtd / (R_d + R_rtd). RTD set to its 250 C value (196.25 ohm).
+* Sweep the RTD resistance to see Vdiv across the operating band.
+Vref  vref 0 DC 3.3
+Rd    vref vdiv 1k
+Rrtd  vdiv 0    {RRTD}
+
+.param RRTD=196.25      ; PT100 at 250 C; 177 ohm@200C, 227 ohm@330C
+.op
+* Sweep RTD over 150..330 C equivalent (157.75 .. 227.05 ohm):
+.dc Rrtd 157.75 227.05 5
+.print dc v(vdiv)
+.end
