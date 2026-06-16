@@ -12,11 +12,12 @@ This is fundamentally a **robotics/controls problem** wearing a chemistry hat. T
 on any real machine. The project is **simulated end-to-end (software-in-the-loop)**,
 structured so each layer can later drop onto real ESP32 / Jetson Orin Nano hardware.
 
-> **Status:** Phases 1–4 complete — first-principles reactor simulator with
+> **Status:** Phases 1–5 complete — first-principles reactor simulator with
 > literature-sourced kinetics and a demonstrable thermal-runaway regime, a data-science
 > layer (DoE, EDA, global sensitivity, sensor-noise model), a physics-informed neural
-> surrogate (R² ≈ 0.996, ONNX), and a **closed-loop controller** that holds the reactor
-> safe through a cooling-failure disturbance that otherwise causes runaway.
+> surrogate (R² ≈ 0.996, ONNX), a **closed-loop controller** that survives a
+> cooling-failure disturbance, and a **dependency-free C++ edge engine** (~0.98 µs/inference,
+> ~4.8× faster than ONNX Runtime, float32-identical).
 
 ## Architecture (planned)
 
@@ -26,7 +27,7 @@ structured so each layer can later drop onto real ESP32 / Jetson Orin Nano hardw
 | **2** | Data science (`analysis/`) | Latin-hypercube DoE, EDA, from-scratch Sobol sensitivity, sensor/ADC noise model. ✅ |
 | **3** | PINN surrogate (`pinn/`) | Physics-informed NN: inputs → steady state, with conservation residuals in the loss; ONNX export. ✅ |
 | **4** | Controller (`control/`) | RTO setpoint optimisation + PI safety feedback; rejects a cooling-failure disturbance. ✅ |
-| 5 | C++ edge inference (`edge/`) | Compiled inference engine, latency-benchmarked (Jetson target). |
+| **5** | C++ edge inference (`edge/`) | Hand-rolled dependency-free C++ engine, weights baked in; benchmarked + parity-checked. ✅ |
 | 6 | Analog + ESP32 (`circuits/`, `firmware/`) | Sensor-conditioning circuits → ESP32 telemetry → actuation. |
 
 ## Phase 1 — reactor simulator
@@ -139,6 +140,27 @@ getting this to work:
 
 ```bash
 uv run python -m control.closed_loop          # controlled vs uncontrolled + plot
+```
+
+## Phase 5 — C++ edge inference
+
+The trained surrogate, deployed as a **hand-rolled C++ forward pass** with the weights
+baked into a generated header (`edge/include/weights.h`) — zero runtime dependencies, so
+it drops onto MCU-class / edge hardware (target: Jetson Orin Nano) directly. `python -m
+pinn.train` emits both `model.onnx` and the C++ header from the same trained model.
+
+| Engine | Latency / inference | Speedup | Parity vs ONNX |
+|---|---|---|---|
+| Hand-rolled C++ | **0.98 µs** | **~4.8×** | max abs diff **6.4e-5** (float32 round-off) |
+| ONNX Runtime (Python) | 4.71 µs | — | — |
+
+Benchmarked on host; see [edge/bench.md](edge/bench.md) for the honest framing (~1 µs is
+the bare inference — the control loop is ms-scale, so inference is never the bottleneck).
+
+```bash
+cmake -S edge -B edge/build -DCMAKE_BUILD_TYPE=Release && cmake --build edge/build
+./edge/build/synfuel_edge --bench 2000000        # benchmark
+echo "3 25 490 1 60000" | ./edge/build/synfuel_edge   # predict a 6-state from stdin
 ```
 
 ## License
