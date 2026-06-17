@@ -4,7 +4,42 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 
-**Raahim Nawaz** · independent project · 2026
+![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white)
+![ONNX](https://img.shields.io/badge/ONNX-005CED?logo=onnx&logoColor=white)
+![C++17](https://img.shields.io/badge/C%2B%2B17-00599C?logo=cplusplus&logoColor=white)
+![ESP32](https://img.shields.io/badge/ESP32%20%2F%20Arduino-00979D?logo=espressif&logoColor=white)
+![SciPy](https://img.shields.io/badge/NumPy%20%2F%20SciPy-013243?logo=scipy&logoColor=white)
+
+**Raahim Nawaz** · 2026
+
+> A complete **sense → model → control → deploy** pipeline for a thermal-runaway-prone
+> chemical reactor: first-principles simulation, a physics-informed neural network, a
+> closed-loop controller, a dependency-free C++ edge engine, and an ESP32
+> software-in-the-loop. *Simulated end-to-end.*
+
+![Closed-loop control rejecting a cooling-failure disturbance](figures/control_closed_loop.png)
+
+*Under a mid-run cooling failure, the closed-loop controller holds the reactor at
+**296 °C (safe)** while the uncontrolled reactor runs away to **328 °C** — keeping ~80 % of
+the liquid-fuel yield. This is the headline result; details in §4.*
+
+## Key results
+
+- **First-principles plant** with literature kinetics reproducing a thermal-runaway regime (Fig. 1).
+- **Global sensitivity:** pressure dominates runaway risk (total-effect Sobol index ≈ 0.87); cooling capacity acts almost entirely through interactions (Fig. 2).
+- **Physics-informed surrogate:** R² ≈ 0.996 on temperature, conversion, and C5+ yield (MAE ≈ 0.7 °C); ONNX matches PyTorch to ~10⁻⁴ (Fig. 3).
+- **Closed-loop control:** controlled reactor stays safe at **296 °C** under a cooling failure that drives the uncontrolled reactor to **328 °C / runaway** (Fig. 4).
+- **Edge inference:** hand-rolled C++ engine at **0.98 µs/inference**, ~4.8× faster than ONNX Runtime, max deviation **6.4 × 10⁻⁵**.
+- **Full software-in-the-loop:** the distributed loop holds the reactor at **289 °C** through the disturbance, the C++ binary serving every in-loop inference (Fig. 5).
+
+## Tech stack
+
+`Python` · `PyTorch` · `ONNX / ONNX Runtime` · `NumPy` · `SciPy` · `Matplotlib` ·
+`C++17 / CMake` · `ESP32 / Arduino` · `SPICE` · `pytest` · `GitHub Actions`
+
+**Skills demonstrated:** control systems (RTO + PI feedback) · scientific / physics-informed ML ·
+numerical simulation of stiff ODEs · global sensitivity analysis · C++ edge deployment ·
+embedded firmware & analog circuit design · software-in-the-loop testing.
 
 ---
 
@@ -34,17 +69,6 @@ sensor front-end and an ESP32 node. All results are reproducible and continuousl
 > **Scope.** The system is simulated end-to-end (software-in-the-loop); no physical
 > reactor or microcontroller is involved. Each layer is structured to drop onto real
 > ESP32 / Jetson Orin Nano hardware (§6).
-
-## Highlights
-
-- **First-principles plant** with literature kinetics that reproduces a thermal-runaway regime (Fig. 1).
-- **Global sensitivity:** pressure dominates runaway risk (total-effect Sobol index ≈ 0.87); cooling capacity acts almost entirely through interactions (Fig. 2).
-- **Physics-informed surrogate:** R² ≈ 0.996 on temperature, conversion, and C5+ yield (MAE ≈ 0.7 °C); ONNX matches PyTorch to ~10⁻⁴ (Fig. 3).
-- **Closed-loop control:** controlled reactor peaks at **296 °C (safe)** under a cooling failure that drives the uncontrolled reactor to **328 °C (runaway)** (Fig. 4).
-- **Edge inference:** hand-rolled C++ engine at **0.98 µs/inference**, ~4.8× faster than ONNX Runtime, max abs deviation **6.4 × 10⁻⁵**.
-- **Full software-in-the-loop:** the distributed loop holds the reactor at **289 °C** through the disturbance, with the deployed C++ binary serving every in-loop inference (Fig. 5).
-
----
 
 ## 1. Background and problem
 
