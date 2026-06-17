@@ -1,211 +1,277 @@
-# synfuel-control
+# Closed-Loop Control of a Simulated Fischer–Tropsch Synfuel Reactor via a Physics-Informed Neural Surrogate and Edge Inference
 
+[![CI](https://github.com/raahimnawaz/synfuel-control/actions/workflows/ci.yml/badge.svg)](https://github.com/raahimnawaz/synfuel-control/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 
-Closed-loop control of a **simulated Fischer-Tropsch synfuel reactor** — converting
-CO₂ + H₂ into liquid hydrocarbons — built as a real-time control system: sense →
-estimate → optimise → actuate.
+**Raahim Nawaz** · independent project · 2026
 
-This is fundamentally a **robotics/controls problem** wearing a chemistry hat. The
-"plant" is a chemical reactor instead of a motor, but the loop is the same one that runs
-on any real machine. The project is **simulated end-to-end (software-in-the-loop)**,
-structured so each layer can later drop onto real ESP32 / Jetson Orin Nano hardware.
+---
 
-> **Status: complete (all 6 phases).** First-principles reactor simulator with
-> literature-sourced kinetics and a thermal-runaway regime → data-science layer (DoE,
-> EDA, Sobol, sensor-noise model) → physics-informed neural surrogate (R² ≈ 0.996, ONNX)
-> → closed-loop controller surviving a cooling-failure disturbance → dependency-free C++
-> edge engine (~0.98 µs, ~4.8× faster than ONNX Runtime) → analog sensor front-end + ESP32
-> firmware closing the full **sense → infer → actuate** loop in software-in-the-loop.
+## Abstract
 
-## Architecture (planned)
+Power-to-liquid Fischer–Tropsch (FT) synthesis converts CO₂ + H₂ into liquid
+hydrocarbons, but its large exothermicity makes the reactor prone to **thermal runaway**:
+a positive feedback between temperature and reaction rate that, unchecked, destroys the
+catalyst. This work develops and validates an **end-to-end, software-in-the-loop control
+system** for such a reactor, spanning first-principles modeling, scientific machine
+learning, real-time control, and embedded edge deployment.
 
-| Phase | Layer | What it does |
+A dynamic continuous-stirred-tank reactor (CSTR) model with literature-sourced kinetics
+serves as the ground-truth plant. A Latin-hypercube design of experiments and
+variance-based (Sobol) sensitivity analysis characterize the operating space and identify
+**pressure as the dominant driver of runaway**. A **physics-informed neural network
+(PINN)** surrogate predicts the reactor steady state, embedding species- and
+energy-conservation residuals in its loss and reaching **R² ≈ 0.996** on held-out data. A
+two-layer controller — real-time optimization (RTO) over the surrogate plus a PI safety
+loop — **holds the reactor below the runaway limit through a cooling-failure disturbance
+that otherwise causes runaway**, while preserving ~80 % C5+ yield. The surrogate is
+deployed as a dependency-free C++ engine (**~0.98 µs per inference, ~4.8× faster than ONNX
+Runtime, float32-identical**) targeting Jetson-class hardware, and the full
+**sense → infer → actuate** loop is closed in software through a modeled analog
+sensor front-end and an ESP32 node. All results are reproducible and continuously tested.
+
+> **Scope.** The system is simulated end-to-end (software-in-the-loop); no physical
+> reactor or microcontroller is involved. Each layer is structured to drop onto real
+> ESP32 / Jetson Orin Nano hardware (§6).
+
+## Highlights
+
+- **First-principles plant** with literature kinetics that reproduces a thermal-runaway regime (Fig. 1).
+- **Global sensitivity:** pressure dominates runaway risk (total-effect Sobol index ≈ 0.87); cooling capacity acts almost entirely through interactions (Fig. 2).
+- **Physics-informed surrogate:** R² ≈ 0.996 on temperature, conversion, and C5+ yield (MAE ≈ 0.7 °C); ONNX matches PyTorch to ~10⁻⁴ (Fig. 3).
+- **Closed-loop control:** controlled reactor peaks at **296 °C (safe)** under a cooling failure that drives the uncontrolled reactor to **328 °C (runaway)** (Fig. 4).
+- **Edge inference:** hand-rolled C++ engine at **0.98 µs/inference**, ~4.8× faster than ONNX Runtime, max abs deviation **6.4 × 10⁻⁵**.
+- **Full software-in-the-loop:** the distributed loop holds the reactor at **289 °C** through the disturbance, with the deployed C++ binary serving every in-loop inference (Fig. 5).
+
+---
+
+## 1. Background and problem
+
+FT synthesis on a cobalt catalyst proceeds, for a CO₂ + H₂ feed, in two coupled steps:
+
+```
+(1) reverse water-gas-shift   CO₂ + H₂  ⇌  CO + H₂O        ΔH ≈ +41 kJ/mol  (endothermic)
+(2) Fischer–Tropsch growth    CO + 2 H₂  →  (–CH₂–) + H₂O   ΔH ≈ −165 kJ/mol (exothermic)
+```
+
+The Arrhenius temperature dependence of (2) combined with its strong exothermicity creates
+the runaway feedback loop (hotter → faster → more heat). The product chain length follows
+the **Anderson–Schulz–Flory (ASF)** distribution, so operating temperature trades **yield
+and conversion against selectivity and safety**. The engineering objective is therefore a
+constrained control problem: *maximize C5+ (liquid-fuel) yield subject to keeping the bed
+below a runaway limit*, under disturbances and noisy measurements. Framed this way the
+reactor is a control plant like any other — the contribution here is a complete,
+reproducible pipeline from physics to a deployable controller.
+
+## 2. System architecture
+
+```
+ reactor plant (ODE)
+   → design of experiments + sensitivity analysis
+   → physics-informed neural surrogate (ONNX)
+   → RTO setpoint optimization + PI safety feedback
+   → C++ edge inference engine
+   → analog sensor front-end + ESP32 node  ──┐
+   ↑___________________ closed loop _________│
+```
+
+| Module | Path | Role |
 |---|---|---|
-| **1** | Reactor sim (`sim/`) | First-principles ODE "plant": coupled RWGS + FT kinetics, energy balance, thermal runaway. ✅ |
-| **2** | Data science (`analysis/`) | Latin-hypercube DoE, EDA, from-scratch Sobol sensitivity, sensor/ADC noise model. ✅ |
-| **3** | PINN surrogate (`pinn/`) | Physics-informed NN: inputs → steady state, with conservation residuals in the loss; ONNX export. ✅ |
-| **4** | Controller (`control/`) | RTO setpoint optimisation + PI safety feedback; rejects a cooling-failure disturbance. ✅ |
-| **5** | C++ edge inference (`edge/`) | Hand-rolled dependency-free C++ engine, weights baked in; benchmarked + parity-checked. ✅ |
-| **6** | Analog + ESP32 (`circuits/`, `firmware/`, `bridge/`) | Sensor-conditioning circuits, ESP32 firmware, and a software-in-the-loop bridge closing the full loop. ✅ |
+| Reactor model | `sim/` | First-principles CSTR ODE plant; coupled RWGS + FT kinetics, energy balance |
+| Data science | `analysis/` | Latin-hypercube DoE, EDA, from-scratch Sobol sensitivity, sensor/ADC noise model |
+| Surrogate | `pinn/` | Physics-informed MLP: inputs → steady state; conservation residuals in loss; ONNX export |
+| Controller | `control/` | RTO over the surrogate + PI safety feedback |
+| Edge engine | `edge/` | Hand-rolled dependency-free C++ inference; weights baked into a header |
+| Embedded | `circuits/`, `firmware/`, `bridge/` | Analog front-end, ESP32 firmware, software-in-the-loop bridge |
 
-## Phase 1 — reactor simulator
+## 3. Methods
 
-A lumped continuous-stirred-tank reactor (CSTR) with two coupled reactions:
+### 3.1 Reactor model (`sim/`)
 
-```
-(1) reverse water-gas-shift   CO2 + H2  <->  CO + H2O      (mildly endothermic)
-(2) Fischer-Tropsch growth    CO + 2 H2  ->  (-CH2-) + H2O (strongly exothermic)
-```
+A lumped CSTR integrates six states `[CO₂, H₂, CO, H₂O, HC, T]` under the two reactions
+above with a jacket energy balance, solved with a stiff integrator. Activation energies,
+reaction enthalpies, and the ASF chain-growth probability are taken from the literature
+(§References); only the rate pre-exponentials are fitted, as they are catalyst-specific
+and routinely tuned per reactor. Sources for every constant are tabulated in
+[`sim/CHEMISTRY.md`](sim/CHEMISTRY.md).
 
-The Arrhenius temperature dependence of (2) plus its large exothermicity is what
-produces **thermal runaway** — hotter → faster → more heat. Keeping the bed below the
-runaway limit while maximising the C5+ (liquid-fuel) fraction is the job of the
-downstream controller.
+### 3.2 Design of experiments and sensitivity (`analysis/`)
 
-Every physical constant (activation energies, reaction enthalpies, ASF chain-growth
-probability) is taken from the literature with citations — see
-[sim/CHEMISTRY.md](sim/CHEMISTRY.md). Only the rate pre-exponentials are tuned, because
-they are catalyst-specific and routinely fitted per reactor.
+Five inputs (feed H₂:CO₂ ratio, pressure, coolant temperature, catalyst loading, jacket
+cooling capacity) are swept by Latin-hypercube sampling to build the dataset used for both
+exploratory analysis and surrogate training. Global sensitivity uses first-order and
+total-effect **Sobol indices** estimated with a from-scratch Saltelli scheme, validated
+against the analytic **Ishigami** function in the test suite.
 
-### Run it
+### 3.3 Physics-informed surrogate (`pinn/`)
 
-```bash
-uv venv --python 3.11
-uv pip install numpy scipy matplotlib
-uv run python -m sim.run_sim          # simulate + plot stable vs. runaway
-```
+A 64-wide tanh MLP (~5 k parameters) maps the five inputs to the 6-D steady state; yield,
+conversion, and temperature are derived from it. The loss combines a data term with
+**relative conservation residuals** (carbon balance, hydrogen balance, energy balance).
+Using *relative* balances rather than the raw `dy/dt = 0` residual is essential: the bare
+residual is numerically stiff (large production and consumption terms cancel), so it
+fights the data fit, whereas the bounded relative form regularizes it. Input scaling and
+output de-normalization are baked into the network so the exported ONNX graph consumes raw
+physical inputs.
 
-This writes `figures/reactor_stable_vs_runaway.png` and prints a summary of final
-temperature, CO₂ conversion, and C5+ yield for a stable and an aggressive operating
-point.
+### 3.4 Controller (`control/`)
 
-## Phase 2 — data science
+Two layers, mirroring a real process-control stack: (i) **RTO** finds the yield-maximizing
+setpoint subject to a steady-state temperature ceiling via a batched search over the
+vectorized surrogate; (ii) a **PI safety loop** regulates bed temperature by adjusting the
+jacket coolant temperature, rejecting disturbances the surrogate never saw. Two findings
+were decisive — *coolant temperature, not catalyst, is the effective actuator* (conversion
+stays near-complete until catalyst is nearly fully cut), and *integral action is required*
+(pure proportional control oscillates, with peaks exceeding the uncontrolled runaway).
 
-Treats the reactor as a system to be characterised statistically:
+### 3.5 Edge inference (`edge/`)
 
-- **Design of experiments** (`analysis/sample.py`) — Latin-hypercube sweep over five
-  inputs (feed ratio, pressure, coolant temperature, catalyst, cooling capacity),
-  building the dataset that also trains the Phase 3 surrogate.
-- **EDA** (`analysis/eda.py`, `analysis/eda.ipynb`) — runaway boundary, the
-  conversion/selectivity trade-off, yield surfaces, and the ASF product distribution.
-- **Global sensitivity** (`analysis/sensitivity.py`) — variance-based Sobol indices via
-  a **from-scratch Saltelli estimator** (validated against the analytic Ishigami
-  function in the tests). Headline finding: **pressure is the dominant driver of thermal
-  runaway** (total-effect index ≈ 0.87); cooling capacity matters almost entirely
-  through interactions.
-- **Sensor + ADC noise model** (`analysis/noise.py`) — 12-bit ESP32 ADC + analog sensor
-  noise; the channel is **sensor-limited** (~5.6 ENOB), not ADC-limited. The Phase 6
-  firmware reuses this exact model so the software-in-the-loop signal path matches.
+The trained surrogate is re-implemented as a hand-rolled C++ forward pass with weights
+emitted as `constexpr` arrays — no Python, ONNX Runtime, or BLAS at runtime. The training
+script emits the ONNX model and the C++ header from the same fitted network, so they
+cannot drift.
 
-```bash
-uv run python -m analysis.sample --n 512     # generate the DoE dataset
-uv run python -m analysis.eda                # EDA overview figure
-uv run python -m analysis.sensitivity --n 256  # Sobol indices + figure
-uv run python -m analysis.noise              # sensor-noise demo + characterisation
-```
+### 3.6 Analog front-end and software-in-the-loop (`circuits/`, `firmware/`, `bridge/`)
 
-## Phase 3 — physics-informed surrogate
+The reactor's temperature and pressure are conditioned into a 0–3.3 V, 12-bit ADC window
+by four analog stages (PT100 RTD divider, non-inverting op-amp, Wheatstone bridge with
+instrumentation amplifier, RC anti-aliasing filter), each derived by hand in
+[`circuits/ANALYSIS.md`](circuits/ANALYSIS.md), reproduced numerically by
+[`circuits/verify.py`](circuits/verify.py), and provided as SPICE decks. An ESP32 firmware
+node and a host bridge close the full loop in software, routing JSON telemetry/commands
+identical to a real device (the standard hardware/software-in-the-loop pattern).
 
-A small MLP maps the five operating inputs to the reactor's **6-dim steady state**
-`[CO₂, H₂, CO, H₂O, HC, T]`; conversion, yield, and temperature are derived from that
-state. Why predict the full state rather than just yield: it lets the loss enforce the
-**governing conservation laws** on the output.
+## 4. Results
 
-- **`pinn/losses.py`** — the physics-informed loss = data MSE + steady-state
-  **conservation residuals** (carbon balance, hydrogen balance, energy balance), written
-  as bounded *relative* residuals so they regularise the fit instead of fighting it. (The
-  naive `dy/dt = 0` residual is numerically stiff — large production/consumption terms
-  cancel — which is why relative balances are used; this is itself a worthwhile
-  PINN-engineering lesson.)
-- **`pinn/model.py`** — a 64-wide tanh MLP (~5 k params, small enough to hand-roll in
-  Phase 5) with input scaling and output de-normalisation baked in as buffers, so the
-  exported ONNX graph takes raw physical inputs and returns the physical state.
-- Trained on the **safe (non-runaway) branch**, where the input→state map is smooth and
-  single-valued. Held-out accuracy: **R² ≈ 0.996** on temperature, conversion, and C5+
-  yield (T MAE ≈ 0.7 °C). ONNX output matches torch to ~1e-4.
+#### Reactor dynamics and the runaway regime
 
-```bash
-uv run python -m pinn.train --n 2500 --epochs 4000   # train, validate, export model.onnx
-```
+![Reactor stable vs runaway](figures/reactor_stable_vs_runaway.png)
 
-## Phase 4 — closed-loop control
+**Figure 1.** Plant behavior. At a nominal operating point the bed settles near 227 °C
+(stable); a cooling failure drives it past the 302 °C runaway limit. Panels: bed
+temperature, CO₂ conversion, C5+ yield, and species concentrations.
 
-The control layer that makes this a *control* project. Two layers, like a real process
-plant:
+#### Global sensitivity
 
-- **RTO (`controller.py`)** — uses the ONNX surrogate as a fast model to find the
-  yield-maximising setpoint subject to a steady-state temperature ceiling, solved by a
-  batched search over the (vectorised) surrogate.
-- **Safety feedback** — a **PI loop** that regulates bed temperature by adjusting the
-  **jacket coolant temperature**, rejecting disturbances the surrogate never saw.
+![Sobol sensitivity](figures/sensitivity_sobol.png)
 
-**Headline result** — at the optimal setpoint, a **cooling failure** (jacket capacity
-drops ~67%) hits at t = 60 s:
+**Figure 2.** First-order (S1) and total-effect (ST) Sobol indices for C5+ yield, peak
+temperature, and runaway. Pressure dominates thermal safety (runaway ST ≈ 0.87); cooling
+capacity contributes mainly through interactions (S1 ≈ 0).
 
-| | controlled | uncontrolled |
-|---|---|---|
-| peak temperature | **296 °C (safe)** | 328 °C → **runaway** |
-| final C5+ yield | 80 % | 89 % (meaningless — catalyst sinters) |
+#### Surrogate validation
 
-Two engineering lessons are documented in `control/controller.py` and were the crux of
-getting this to work:
-1. **Coolant temperature, not catalyst, is the effective actuator** — at the operating
-   point conversion stays near-complete until the catalyst is almost fully cut, so
-   throttling it barely moves temperature; increasing cooling does.
-2. **PI, not proportional** — a memoryless proportional law restores the setpoint the
-   instant the bed cools and sets up a relaxation oscillation whose peaks can *exceed*
-   the uncontrolled runaway. The integral term settles smoothly.
+![PINN validation](figures/pinn_validation.png)
 
-```bash
-uv run python -m control.closed_loop          # controlled vs uncontrolled + plot
-```
+**Figure 3.** Training losses (data and physics residual both decreasing) and held-out
+parity for steady-state temperature, conversion, and C5+ yield. **R² ≈ 0.996** on all
+three (temperature MAE ≈ 0.7 °C). The exported ONNX model matches PyTorch to ~10⁻⁴.
 
-## Phase 5 — C++ edge inference
+#### Closed-loop disturbance rejection
 
-The trained surrogate, deployed as a **hand-rolled C++ forward pass** with the weights
-baked into a generated header (`edge/include/weights.h`) — zero runtime dependencies, so
-it drops onto MCU-class / edge hardware (target: Jetson Orin Nano) directly. `python -m
-pinn.train` emits both `model.onnx` and the C++ header from the same trained model.
+![Closed-loop control](figures/control_closed_loop.png)
+
+**Figure 4.** Response to a cooling failure (jacket capacity −67 %) at t = 60 s.
+
+| Metric | Controlled | Uncontrolled |
+|---|---:|---:|
+| Peak temperature | **296 °C (safe)** | 328 °C → **runaway** |
+| Final C5+ yield | 80 % | 89 % (not realizable — catalyst sinters) |
+
+#### Edge inference benchmark
 
 | Engine | Latency / inference | Speedup | Parity vs ONNX |
-|---|---|---|---|
-| Hand-rolled C++ | **0.98 µs** | **~4.8×** | max abs diff **6.4e-5** (float32 round-off) |
+|---|---:|---:|---:|
+| **Hand-rolled C++** | **0.98 µs** | **~4.8×** | max abs diff **6.4 × 10⁻⁵** |
 | ONNX Runtime (Python) | 4.71 µs | — | — |
 
-Benchmarked on host; see [edge/bench.md](edge/bench.md) for the honest framing (~1 µs is
-the bare inference — the control loop is ms-scale, so inference is never the bottleneck).
+Benchmarked on host (Apple Silicon, `clang -O3`); see [`edge/bench.md`](edge/bench.md).
+~1 µs is the bare inference time — far below the millisecond-scale control period, so
+inference is never the loop bottleneck.
+
+#### Full software-in-the-loop
+
+![Software-in-the-loop](figures/sil_closed_loop.png)
+
+**Figure 5.** The complete distributed loop (plant → analog front-end + ADC + noise →
+ESP32 node → bridge → C++ inference + controller → command → plant) under the same cooling
+failure. Bed temperature is held at **289 °C** (true plant vs. the signal measured through
+the RTD → op-amp → ADC chain). The deployed C++ binary served all **480 in-loop
+inferences**, tracking the true steady state to ~4 °C.
+
+## 5. Reproducibility
 
 ```bash
+uv venv --python 3.11 && uv pip install -e ".[dev]"
+
+# Phase 1 — reactor dynamics (stable vs. runaway)
+uv run python -m sim.run_sim
+
+# Phase 2 — DoE, EDA, Sobol sensitivity, sensor-noise model
+uv run python -m analysis.sample --n 512
+uv run python -m analysis.eda
+uv run python -m analysis.sensitivity --n 256
+uv run python -m analysis.noise
+
+# Phase 3 — train the physics-informed surrogate, export ONNX + C++ weights
+uv run python -m pinn.train --n 2500 --epochs 4000
+
+# Phase 4 — closed-loop control vs. a cooling-failure disturbance
+uv run python -m control.closed_loop
+
+# Phase 5 — build and benchmark the C++ edge engine
 cmake -S edge -B edge/build -DCMAKE_BUILD_TYPE=Release && cmake --build edge/build
-./edge/build/synfuel_edge --bench 2000000        # benchmark
-echo "3 25 490 1 60000" | ./edge/build/synfuel_edge   # predict a 6-state from stdin
+./edge/build/synfuel_edge --bench 2000000
+
+# Phase 6 — verify the analog front-end and run the full software-in-the-loop
+uv run python -m circuits.verify
+uv run python -m bridge.run_sil
+
+# Tests (physics conservation, Ishigami-validated Sobol, ONNX/C++ parity, loop safety)
+uv run pytest -q
 ```
 
-## Phase 6 — analog front-end + ESP32 + software-in-the-loop
+Continuous integration runs the test suite, builds the C++ engine, and exercises the full
+pipeline on every push.
 
-The embedded layer, which closes the full **sense → infer → actuate** loop.
+## 6. Limitations and scope
 
-**Analog front-end (`circuits/`)** — four conditioning stages, each derived by hand in
-[circuits/ANALYSIS.md](circuits/ANALYSIS.md), reproduced numerically by
-[`circuits/verify.py`](circuits/verify.py), and provided as SPICE decks in
-[circuits/spice/](circuits/spice/):
+- **Simulated end-to-end.** The "plant" is the ODE model; the surrogate is trained on data
+  generated from it. Kinetic parameters are literature-sourced and sensor noise is modeled,
+  but no physical reactor is involved.
+- **Software-in-the-loop, not hardware-in-the-loop.** The ESP32 firmware (`.ino`) and SPICE
+  circuits are hardware-faithful and runnable in Wokwi / LTspice / Falstad, but are not
+  flashed or simulated as part of CI (no embedded toolchain in the runner). The JSON
+  protocol and calibration are shared between the firmware and the host bridge so the
+  virtual node can be swapped for real hardware without changing the bridge.
+- **Controller.** The control layer is RTO + PI feedback, not a receding-horizon MPC.
 
-| Stage | Result |
-|---|---|
-| PT100 RTD divider (temperature) | 0.88 mV/°C; self-heating 1.5 mW |
-| Non-inverting op-amp (×5) | 200–330 °C → 2.48–3.05 V; 0.18 °C/code |
-| Wheatstone bridge + in-amp (×50) | 50 bar → full-scale 3.3 V |
-| RC anti-aliasing (fc = 9.95 Hz) | −15.6 dB at 60 Hz |
-
-(A PT100 RTD is used, not an NTC thermistor — the reactor runs above a thermistor's
-~150 °C ceiling.)
-
-**Firmware (`firmware/`)** — `esp32_node.ino` reads the conditioned signals on two ADC
-pins, converts to physical units with the *same* calibration as `circuits/frontend.py`,
-streams JSON telemetry, and applies coolant-setpoint commands to a PWM valve output.
-Runs as-is in **Wokwi** (`diagram.json` + `wokwi.toml`); not compiled in CI (no ESP32
-toolchain), but its logic is mirrored and exercised by the SIL below.
-
-**Software-in-the-loop (`bridge/`)** — `run_sil.py` wires every layer together:
+## 7. Repository layout
 
 ```
-reactor plant → analog front-end + ADC + noise → virtual ESP32 (JSON) → bridge
-   → C++ edge engine (real subprocess) + controller → JSON command → ESP32 → plant
+sim/        first-principles reactor model + chemistry writeup
+analysis/   DoE, EDA notebook, Sobol sensitivity, sensor/ADC noise model
+pinn/       physics-informed surrogate: model, loss, training, ONNX export
+control/    RTO + PI safety controller, closed-loop simulation
+edge/       hand-rolled C++ inference engine, CMake build, benchmark
+circuits/   analog front-end analysis, calibration, SPICE decks
+firmware/   ESP32 sketch + Wokwi project
+bridge/     virtual ESP32 + software-in-the-loop runner
+tests/      conservation, Sobol-vs-Ishigami, ONNX/C++ parity, loop safety
+figures/    generated result figures
 ```
 
-A cooling failure hits mid-run; the full distributed loop holds the reactor at **289 °C
-(safe)** through it. The deployed **C++ binary serves every in-loop inference** (480
-queries, tracking the true steady state to ~4 °C). The JSON protocol is identical to a
-real Wokwi/hardware ESP32, so the virtual node swaps for the real one with no bridge
-change — the standard **HIL/SIL** development pattern.
+## References
 
-```bash
-uv run python -m circuits.verify        # check the circuit hand-calcs
-uv run python -m bridge.run_sil         # run the full software-in-the-loop demo
-```
+1. M. E. Dry, "The Fischer–Tropsch process: 1950–2000," *Catalysis Today* **71** (2002) 227–241.
+2. G. P. van der Laan, A. A. C. M. Beenackers, "Kinetics and selectivity of the Fischer–Tropsch synthesis: a literature review," *Catalysis Reviews* **41** (1999) 255–318.
+3. I. C. Yates, C. N. Satterfield, "Intrinsic kinetics of the Fischer–Tropsch synthesis on a cobalt catalyst," *Energy & Fuels* **5** (1991) 168–173.
+4. M. Raissi, P. Perdikaris, G. E. Karniadakis, "Physics-informed neural networks," *Journal of Computational Physics* **378** (2019) 686–707.
+5. I. M. Sobol′, "Global sensitivity indices for nonlinear mathematical models and their Monte Carlo estimates," *Mathematics and Computers in Simulation* **55** (2001) 271–280.
+6. A. Saltelli et al., "Variance based sensitivity analysis of model output," *Computer Physics Communications* **181** (2010) 259–270.
+7. T. Ishigami, T. Homma, "An importance quantification technique in uncertainty analysis for computer models," *Proc. ISUMA* (1990) 398–403.
 
 ## License
 
-MIT
+Released under the MIT License — see [LICENSE](LICENSE).
