@@ -1,0 +1,2 @@
+# Keep the analysis notebook out of GitHub language stats so Python/C++ show
+*.ipynb linguist-documentation
